@@ -5,6 +5,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.util.ArrayList;
+import java.util.List;
 
 public class Bucket {
     private File file;
@@ -17,16 +19,36 @@ public class Bucket {
         try(FileOutputStream _ = new FileOutputStream(file)) {}
     }
 
+    public List<BlobEntry> GetBlobs() throws Exception {
+        List<BlobEntry> entries = new ArrayList<>();
+        try (FileInputStream in = new FileInputStream(file)) {
+
+            int offset = 0;
+            while (in.available()>0) {
+                int pathLength = decodeInt(in.readNBytes(4));
+                byte[] pathBuf = in.readNBytes(pathLength);
+    
+                int contentLength = decodeInt(in.readNBytes(4));
+                in.skip(contentLength);
+
+                entries.add(new BlobEntry(new String(pathBuf), offset));
+                offset += 4 + pathLength + 4 + contentLength;
+            }
+
+            return entries;
+        }
+    }
+
     public Blob GetBlob(long offset) throws Exception {
         try (FileInputStream in = new FileInputStream(file)) {
             in.skip(offset);
             int pathLength = decodeInt(in.readNBytes(4));
-            byte[] pathBug = in.readNBytes(pathLength);
+            byte[] pathBuf = in.readNBytes(pathLength);
 
             int contentLength = decodeInt(in.readNBytes(4));
             byte[] contentBuf = in.readNBytes(contentLength);
 
-            return new Blob(new String(pathBug), contentBuf);
+            return new Blob(new String(pathBuf), contentBuf);
         }
     }
 
