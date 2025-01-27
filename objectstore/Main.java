@@ -16,7 +16,7 @@ public class Main {
         var blobs = b.getBlobs();
         for (Map.Entry<String, Long> blobEntry : blobs.entrySet()) {
             var blob = b.getBlob(blobEntry.getValue());
-            System.out.println(blob.path());
+            System.out.println(blob.name());
             System.out.println(blob.content().length);
         }
     }

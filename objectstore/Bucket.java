@@ -41,9 +41,20 @@ public class Bucket {
         }
     }
 
+    public BlobMetadata getBlobMetadata(long offset) throws IOException {
+        try (RandomAccessFile in = new RandomAccessFile(file, "r")) {
+            in.seek(offset);
+
+            String name = in.readUTF();
+            int contentLength = in.readInt();
+
+            return new BlobMetadata(name, contentLength);
+        }
+    }
+
     public void deleteBlob(long offset) throws IOException {
-        Blob b = getBlob(offset); // TODO: improve this
-        PageRange pages = offsetToPages(offset, b.getBlobSize());
+        BlobMetadata m = getBlobMetadata(offset);
+        PageRange pages = offsetToPages(offset, m.blobSize());
 
         try (RandomAccessFile out = new RandomAccessFile(file, "rw")) {
             // Updating page usage
@@ -54,17 +65,17 @@ public class Bucket {
                 out.write(Page.PAGE_FREE);
             }
 
-            this.blobEntries.remove(b.path());
+            this.blobEntries.remove(m.name());
             writeBucketFooter(out);
         }
     }
 
-    public long uploadBlob(String path, byte[] content) throws RuntimeException, IOException {
-        if (this.blobEntries.get(path) != null) {
+    public long uploadBlob(String name, byte[] content) throws RuntimeException, IOException {
+        if (this.blobEntries.get(name) != null) {
             throw new RuntimeException("file already exists");
         }
 
-        int totalBlobSize = 2 + path.length() + 4 + content.length;
+        int totalBlobSize = 2 + name.length() + 4 + content.length;
         PageRange pages = findUnusedPages(totalBlobSize);
 
         try (RandomAccessFile out = new RandomAccessFile(this.file, "rw")) {
@@ -85,12 +96,12 @@ public class Bucket {
             long offset = this.bucketHeader.bucketHeaderSize + (long) pages.start() * Page.PAGE_SIZE;
             out.seek(offset);
 
-            out.writeUTF(path);
+            out.writeUTF(name);
 
             out.writeInt(content.length);
             out.write(content);
 
-            this.blobEntries.put(path, offset);
+            this.blobEntries.put(name, offset);
             writeBucketFooter(out);
 
             return offset;
