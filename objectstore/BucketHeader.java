@@ -15,7 +15,7 @@ public class BucketHeader {
         this.pageTable = new byte[this.pageTableSize];
     }
 
-    public BucketHeader(int pageSize, int pageTableSize, byte[] pageTable, int blobEntriesOffset) {
+    public BucketHeader(int pageSize, int pageTableSize, long blobEntriesOffset, byte[] pageTable) {
         this.bucketHeaderSize = 4 + 4 + 4 + 4 + pageSize;
         this.pageSize = pageSize;
         this.pageTableSize = pageTableSize;

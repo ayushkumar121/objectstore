@@ -9,18 +9,44 @@ public class Bucket {
     private final BucketHeader bucketHeader;
     private final Map<String, Long> blobEntries;
 
-    public Bucket(String name) throws IOException {
-        this.file = new File(name);
-        this.bucketHeader = new BucketHeader();
+    public Bucket(String bucketName) throws IOException {
+        this(bucketName, false);
+    }
+
+    public Bucket(String bucketName, boolean override) throws IOException {
+        this.file = new File(bucketName);
         this.blobEntries  = new HashMap<>();
 
-        // Write initial header
-        try (RandomAccessFile out = new RandomAccessFile(this.file, "rw")) {
-            out.writeInt(this.bucketHeader.bucketHeaderSize);
-            out.writeInt(this.bucketHeader.pageSize);
-            out.writeInt(this.bucketHeader.pageTableSize);
-            out.writeLong(this.bucketHeader.blobEntriesOffset);
-            out.write(this.bucketHeader.pageTable);
+        try (RandomAccessFile rw = new RandomAccessFile(this.file, "rw")) {
+            // Reading existing bucket
+            if (!override && this.file.exists()) {
+                int bucketHeaderSize = rw.readInt();
+                int pageSize = rw.readInt();
+                int pageTableSize = rw.readInt();
+                long blobEntriesOffset = rw.readLong();
+                byte[] pageTable = new byte[pageTableSize];
+                rw.read(pageTable);
+                this.bucketHeader = new BucketHeader(pageSize, pageTableSize, blobEntriesOffset, pageTable);
+                assert bucketHeaderSize == this.bucketHeader.bucketHeaderSize;
+
+                rw.seek(blobEntriesOffset);
+                int blobEntriesCount = rw.readInt();
+
+                for (int i = 0; i < blobEntriesCount; i++) {
+                    String name = rw.readUTF();
+                    long offset = rw.readLong();
+                    this.blobEntries.put(name, offset);
+                }
+            } else {
+                this.bucketHeader = new BucketHeader();
+
+                // Write initial header
+                rw.writeInt(this.bucketHeader.bucketHeaderSize);
+                rw.writeInt(this.bucketHeader.pageSize);
+                rw.writeInt(this.bucketHeader.pageTableSize);
+                rw.writeLong(this.bucketHeader.blobEntriesOffset);
+                rw.write(this.bucketHeader.pageTable);
+            }
         }
     }
 
@@ -56,17 +82,17 @@ public class Bucket {
         BlobMetadata m = getBlobMetadata(offset);
         PageRange pages = offsetToPages(offset, m.blobSize());
 
-        try (RandomAccessFile out = new RandomAccessFile(file, "rw")) {
+        try (RandomAccessFile rw = new RandomAccessFile(file, "rw")) {
             // Updating page usage
-            out.seek((this.bucketHeader.bucketHeaderSize -
+            rw.seek((this.bucketHeader.bucketHeaderSize -
                     (long) this.bucketHeader.pageTableSize) + pages.start());
             for (int i = pages.start(); i < pages.start()+pages.count(); i++) {
                 this.bucketHeader.pageTable[i] = Page.PAGE_FREE;
-                out.write(Page.PAGE_FREE);
+                rw.write(Page.PAGE_FREE);
             }
 
             this.blobEntries.remove(m.name());
-            writeBucketFooter(out);
+            writeBucketFooter(rw);
         }
     }
 
@@ -78,31 +104,31 @@ public class Bucket {
         int totalBlobSize = 2 + name.length() + 4 + content.length;
         PageRange pages = findUnusedPages(totalBlobSize);
 
-        try (RandomAccessFile out = new RandomAccessFile(this.file, "rw")) {
+        try (RandomAccessFile rw = new RandomAccessFile(this.file, "rw")) {
             // Writing new offset for blob entries
-            out.seek(this.bucketHeader.bucketHeaderSize - (long) (this.bucketHeader.pageTableSize + 8));
+            rw.seek(this.bucketHeader.bucketHeaderSize - (long) (this.bucketHeader.pageTableSize + 8));
             this.bucketHeader.blobEntriesOffset = Math.max(
                     this.bucketHeader.blobEntriesOffset,
                     this.bucketHeader.bucketHeaderSize + (long) (pages.start()+1) * Page.PAGE_SIZE);
-            out.writeLong(this.bucketHeader.blobEntriesOffset);
+            rw.writeLong(this.bucketHeader.blobEntriesOffset);
 
             // Updating page usage
-            out.skipBytes(pages.start());
+            rw.skipBytes(pages.start());
             for (int i = pages.start(); i < pages.start()+pages.count(); i++) {
                 this.bucketHeader.pageTable[i] = Page.PAGE_USED;
-                out.write(Page.PAGE_USED);
+                rw.write(Page.PAGE_USED);
             }
 
             long offset = this.bucketHeader.bucketHeaderSize + (long) pages.start() * Page.PAGE_SIZE;
-            out.seek(offset);
+            rw.seek(offset);
 
-            out.writeUTF(name);
+            rw.writeUTF(name);
 
-            out.writeInt(content.length);
-            out.write(content);
+            rw.writeInt(content.length);
+            rw.write(content);
 
             this.blobEntries.put(name, offset);
-            writeBucketFooter(out);
+            writeBucketFooter(rw);
 
             return offset;
         }
@@ -138,6 +164,7 @@ public class Bucket {
     private void writeBucketFooter(RandomAccessFile out) throws IOException {
         out.setLength(this.bucketHeader.blobEntriesOffset);
         out.seek(this.bucketHeader.blobEntriesOffset);
+        out.writeInt(this.blobEntries.size());
         for (Map.Entry<String, Long> e: this.blobEntries.entrySet()) {
             out.writeUTF(e.getKey());
             out.writeLong(e.getValue());
