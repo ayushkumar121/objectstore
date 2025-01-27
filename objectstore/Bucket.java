@@ -1,6 +1,7 @@
 package objectstore;
 
 import java.io.*;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -51,10 +52,10 @@ public class Bucket {
     }
 
     public Map<String, Long> getBlobs() {
-        return blobEntries;
+        return Collections.unmodifiableMap(blobEntries);
     }
 
-    public Blob getBlob(long offset) throws IOException {
+    public synchronized Blob getBlob(long offset) throws IOException {
         try (RandomAccessFile in = new RandomAccessFile(file, "r")) {
             in.seek(offset);
 
@@ -68,7 +69,7 @@ public class Bucket {
         }
     }
 
-    public BlobMetadata getBlobMetadata(long offset) throws IOException {
+    public synchronized BlobMetadata getBlobMetadata(long offset) throws IOException {
         try (RandomAccessFile in = new RandomAccessFile(file, "r")) {
             in.seek(offset);
 
@@ -79,7 +80,7 @@ public class Bucket {
         }
     }
 
-    public void deleteBlob(long offset) throws IOException {
+    public synchronized void deleteBlob(long offset) throws IOException {
         BlobMetadata m = getBlobMetadata(offset);
         PageRange pages = offsetToPages(offset, m.blobSize());
 
@@ -97,7 +98,7 @@ public class Bucket {
         }
     }
 
-    public long uploadBlob(String name, byte[] content) throws RuntimeException, IOException {
+    public synchronized long uploadBlob(String name, byte[] content) throws RuntimeException, IOException {
         if (this.blobEntries.get(name) != null) {
             throw new RuntimeException("blob already exists");
         }
