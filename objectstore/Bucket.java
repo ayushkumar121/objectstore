@@ -62,6 +62,7 @@ public class Bucket {
 
             int contentLength = in.readInt();
             byte[] contentBuf = new byte[contentLength];
+            in.read(contentBuf);
 
             return new Blob(path, contentBuf);
         }
