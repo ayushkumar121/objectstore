@@ -92,7 +92,7 @@ public class Bucket {
             }
 
             this.blobEntries.remove(m.name());
-            writeBucketFooter(rw);
+            writeUpdatedBlobEntries(rw);
         }
     }
 
@@ -128,7 +128,7 @@ public class Bucket {
             rw.write(content);
 
             this.blobEntries.put(name, offset);
-            writeBucketFooter(rw);
+            writeUpdatedBlobEntries(rw);
 
             return offset;
         }
@@ -161,7 +161,7 @@ public class Bucket {
         return new PageRange(start, count);
     }
 
-    private void writeBucketFooter(RandomAccessFile out) throws IOException {
+    private void writeUpdatedBlobEntries(RandomAccessFile out) throws IOException {
         out.setLength(this.bucketHeader.blobEntriesOffset);
         out.seek(this.bucketHeader.blobEntriesOffset);
         out.writeInt(this.blobEntries.size());
