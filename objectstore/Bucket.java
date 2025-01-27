@@ -98,7 +98,7 @@ public class Bucket {
 
     public long uploadBlob(String name, byte[] content) throws RuntimeException, IOException {
         if (this.blobEntries.get(name) != null) {
-            throw new RuntimeException("file already exists");
+            throw new RuntimeException("blob already exists");
         }
 
         int totalBlobSize = 2 + name.length() + 4 + content.length;
@@ -109,7 +109,7 @@ public class Bucket {
             rw.seek(this.bucketHeader.bucketHeaderSize - (long) (this.bucketHeader.pageTableSize + 8));
             this.bucketHeader.blobEntriesOffset = Math.max(
                     this.bucketHeader.blobEntriesOffset,
-                    this.bucketHeader.bucketHeaderSize + (long) (pages.start()+1) * Page.PAGE_SIZE);
+                    this.bucketHeader.bucketHeaderSize + (long) (pages.start() + pages.count()) * Page.PAGE_SIZE);
             rw.writeLong(this.bucketHeader.blobEntriesOffset);
 
             // Updating page usage
