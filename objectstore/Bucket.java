@@ -1,9 +1,7 @@
 package objectstore;
 
 import java.io.*;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 public class Bucket {
     private final File file;
@@ -55,112 +53,130 @@ public class Bucket {
         return Collections.unmodifiableMap(blobEntries);
     }
 
-    public synchronized Blob getBlob(long offset) throws IOException {
-        try (RandomAccessFile in = new RandomAccessFile(file, "r")) {
-            in.seek(offset);
-
-            String path = in.readUTF();
-
-            int contentLength = in.readInt();
-            byte[] contentBuf = new byte[contentLength];
-            in.read(contentBuf);
-
-            return new Blob(path, contentBuf);
+    public synchronized Blob getBlob(String name) throws IOException {
+        Long offset = this.blobEntries.get(name);
+        if (offset == null) {
+            throw new RuntimeException("blob does not exists exists");
         }
-    }
 
-    public synchronized BlobMetadata getBlobMetadata(long offset) throws IOException {
+        byte[] content = new byte[0];
+
+        int contentSize = 0;
         try (RandomAccessFile in = new RandomAccessFile(file, "r")) {
-            in.seek(offset);
+            while(offset != 0) {
+                in.seek(offset);
+                long nextOffset = in.readLong();
+                int chunkSize = in.readInt();
+                byte[] chunk = new byte[chunkSize];
+                in.read(chunk);
 
-            String name = in.readUTF();
-            int contentLength = in.readInt();
+                contentSize += chunkSize;
+                offset = nextOffset;
 
-            return new BlobMetadata(name, contentLength);
-        }
-    }
+                byte[] newContentArray = new byte[contentSize];
+                System.arraycopy(content, 0, newContentArray, 0, content.length);
+                System.arraycopy(chunk, 0, newContentArray, content.length, chunkSize);
 
-    public synchronized void deleteBlob(long offset) throws IOException {
-        BlobMetadata m = getBlobMetadata(offset);
-        PageRange pages = offsetToPages(offset, m.blobSize());
-
-        try (RandomAccessFile rw = new RandomAccessFile(file, "rw")) {
-            // Updating page usage
-            rw.seek((this.bucketHeader.bucketHeaderSize -
-                    (long) this.bucketHeader.pageTableSize) + pages.start());
-            for (int i = pages.start(); i < pages.start()+pages.count(); i++) {
-                this.bucketHeader.pageTable[i] = Page.PAGE_FREE;
-                rw.write(Page.PAGE_FREE);
+                content = newContentArray;
             }
 
-            this.blobEntries.remove(m.name());
+            return new Blob(name, content);
+        }
+    }
+
+    public synchronized void deleteBlob(String name) throws IOException {
+        Long offset = this.blobEntries.get(name);
+        if (offset == null) {
+            throw new RuntimeException("blob does not exists exists");
+        }
+
+        try (RandomAccessFile rw = new RandomAccessFile(file, "rw")) {
+            while(offset != 0) {
+                rw.seek(offset);
+                long nextOffset = rw.readLong();
+                int chunkSize = rw.readInt();
+                byte[] chunk = new byte[chunkSize];
+                rw.read(chunk);
+
+                int pageIndex = (int) (offset - this.bucketHeader.bucketHeaderSize) / this.bucketHeader.pageSize;
+                this.bucketHeader.pageTable[pageIndex] = Page.PAGE_FREE;
+
+                offset = nextOffset;
+            }
+
+            this.blobEntries.remove(name);
             writeUpdatedBlobEntries(rw);
         }
     }
 
-    public synchronized long uploadBlob(String name, byte[] content) throws RuntimeException, IOException {
+    public synchronized void uploadBlob(String name, byte[] content) throws RuntimeException, IOException {
         if (this.blobEntries.get(name) != null) {
             throw new RuntimeException("blob already exists");
         }
 
-        int totalBlobSize = 2 + name.length() + 4 + content.length;
-        PageRange pages = findUnusedPages(totalBlobSize);
+        int totalBlobSize = 4 + content.length;
+        int pagesCount = (totalBlobSize + this.bucketHeader.pageSize - 1) / this.bucketHeader.pageSize;
+        List<Integer> pageIndexes = findUnusedPages(pagesCount);
+        if (pageIndexes.size() < pagesCount) {
+            throw new RuntimeException("no space left in the bucket");
+        }
+        Integer minPageIndex = Collections.min(pageIndexes);
+        Integer maxPageIndex = Collections.max(pageIndexes);
 
         try (RandomAccessFile rw = new RandomAccessFile(this.file, "rw")) {
             // Writing new offset for blob entries
             rw.seek(this.bucketHeader.bucketHeaderSize - (long) (this.bucketHeader.pageTableSize + 8));
             this.bucketHeader.blobEntriesOffset = Math.max(
                     this.bucketHeader.blobEntriesOffset,
-                    this.bucketHeader.bucketHeaderSize + (long) (pages.start() + pages.count()) * Page.PAGE_SIZE);
+                    this.bucketHeader.bucketHeaderSize + (long) (maxPageIndex+1) * this.bucketHeader.pageSize);
             rw.writeLong(this.bucketHeader.blobEntriesOffset);
 
-            // Updating page usage
-            rw.skipBytes(pages.start());
-            for (int i = pages.start(); i < pages.start()+pages.count(); i++) {
-                this.bucketHeader.pageTable[i] = Page.PAGE_USED;
+            int written = 0;
+            for (int i = 0; i < pageIndexes.size(); i++) {
+                Integer pageIndex = pageIndexes.get(i);
+
+                // Updating page usage
+                this.bucketHeader.pageTable[pageIndex] = Page.PAGE_USED;
+
+                // Updating page table on disk
+                rw.seek(this.bucketHeader.bucketHeaderSize - this.bucketHeader.pageTableSize + (long)pageIndex);
                 rw.write(Page.PAGE_USED);
+
+                // Copying blob to page
+                long pageOffset = this.bucketHeader.bucketHeaderSize + (long) pageIndex * this.bucketHeader.pageSize;
+                rw.seek(pageOffset);
+
+                if (i < pageIndexes.size() - 1) {
+                    long nextOffset = this.bucketHeader.bucketHeaderSize + (long) pageIndexes.get(i+1) * this.bucketHeader.pageSize;
+                    rw.writeLong(nextOffset);
+                } else {
+                    rw.writeLong(0);
+                }
+
+                int toWrite = Math.min(this.bucketHeader.pageSize - 12, content.length - written);
+                rw.writeInt(toWrite);
+                rw.write(content, written, toWrite);
+
+                written += toWrite;
             }
 
-            long offset = this.bucketHeader.bucketHeaderSize + (long) pages.start() * Page.PAGE_SIZE;
-            rw.seek(offset);
-
-            rw.writeUTF(name);
-
-            rw.writeInt(content.length);
-            rw.write(content);
+            long offset = this.bucketHeader.bucketHeaderSize + (long) minPageIndex * this.bucketHeader.pageSize;
 
             this.blobEntries.put(name, offset);
             writeUpdatedBlobEntries(rw);
-
-            return offset;
         }
     }
 
-    private PageRange findUnusedPages(int blobSize) {
-        int count = (blobSize + this.bucketHeader.pageSize) / this.bucketHeader.pageSize;
-        int start = -1;
+    private List<Integer> findUnusedPages(int pageCount) {
+        List<Integer> unusedPages = new ArrayList<>();
         for (int i = 0; i < this.bucketHeader.pageTableSize; i++) {
-            boolean found = true;
-            for (int j = i; j < i+count; j++) {
-                if(this.bucketHeader.pageTable[j] == Page.PAGE_USED) {
-                    found = false;
-                    break;
-                }
-            }
-            if (found) {
-                start = i;
-                break;
+            if (unusedPages.size() >= pageCount) break;
+
+            if (this.bucketHeader.pageTable[i] != Page.PAGE_USED) {
+                unusedPages.add(i);
             }
         }
-        assert start != -1;
-        return new PageRange(start, count);
-    }
-
-    private PageRange offsetToPages(long offset, int blobSize) {
-        int start = (int)((offset - this.bucketHeader.bucketHeaderSize) / Page.PAGE_SIZE);
-        int count = (blobSize + this.bucketHeader.pageSize) / this.bucketHeader.pageSize;
-
-        return new PageRange(start, count);
+        return unusedPages;
     }
 
     private void writeUpdatedBlobEntries(RandomAccessFile out) throws IOException {

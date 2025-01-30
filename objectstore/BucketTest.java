@@ -13,7 +13,6 @@ public class BucketTest {
             setup();
             testBucketCreation();
             testUploadBlob();
-            testRetrieveBlobMetadata();
             testRetrieveBlob();
             testDeleteBlob();
             testDuplicateBlobUpload();
@@ -55,26 +54,11 @@ public class BucketTest {
         String blobName = "testBlob";
         byte[] content = "Hello, world!".getBytes();
 
-        long offset = bucket.uploadBlob(blobName, content);
-        if (offset > 0 && bucket.getBlobs().containsKey(blobName)) {
+        bucket.uploadBlob(blobName, content);
+        if (bucket.getBlobs().containsKey(blobName)) {
             System.out.println("Blob uploaded successfully.");
         } else {
             System.err.println("Blob upload failed.");
-        }
-    }
-
-    private static void testRetrieveBlobMetadata() throws IOException {
-        System.out.println("Running testRetrieveBlobMetadata...");
-        String blobName = "metadataBlob";
-        byte[] content = "Test Data".getBytes();
-
-        long offset = bucket.uploadBlob(blobName, content);
-        BlobMetadata metadata = bucket.getBlobMetadata(offset);
-
-        if (blobName.equals(metadata.name()) && content.length == metadata.blobSize()) {
-            System.out.println("Blob metadata retrieved successfully.");
-        } else {
-            System.err.println("Failed to retrieve correct blob metadata.");
         }
     }
 
@@ -83,8 +67,8 @@ public class BucketTest {
         String blobName = "retrieveBlob";
         byte[] content = "Retrieve Me".getBytes();
 
-        long offset = bucket.uploadBlob(blobName, content);
-        Blob retrievedBlob = bucket.getBlob(offset);
+        bucket.uploadBlob(blobName, content);
+        Blob retrievedBlob = bucket.getBlob(blobName);
 
         if (blobName.equals(retrievedBlob.name()) && java.util.Arrays.equals(content, retrievedBlob.content())) {
             System.out.println("Blob retrieved successfully.");
@@ -98,8 +82,8 @@ public class BucketTest {
         String blobName = "deleteBlob";
         byte[] content = "Delete Me".getBytes();
 
-        long offset = bucket.uploadBlob(blobName, content);
-        bucket.deleteBlob(offset);
+        bucket.uploadBlob(blobName, content);
+        bucket.deleteBlob(blobName);
 
         if (!bucket.getBlobs().containsKey(blobName)) {
             System.out.println("Blob deleted successfully.");
@@ -133,12 +117,8 @@ public class BucketTest {
         byte[] largeContent = new byte[4096 * 3];  // 3 full pages
         String blobName = "largeBlob";
 
-        long offset = bucket.uploadBlob(blobName, largeContent);
-        if (offset > 0) {
-            System.out.println("Large blob uploaded and allocated successfully.");
-        } else {
-            System.err.println("Page allocation test failed.");
-        }
+        bucket.uploadBlob(blobName, largeContent);
+        System.out.println("Large blob uploaded and allocated successfully.");
     }
 
     private static void testBlobEntriesPersistency() throws IOException {
@@ -146,7 +126,7 @@ public class BucketTest {
         String blobName = "persistBlob";
         byte[] content = "Persistent Data".getBytes();
 
-        long offset = bucket.uploadBlob(blobName, content);
+        bucket.uploadBlob(blobName, content);
         bucket = new Bucket(TEST_BUCKET_NAME, false);  // Reload bucket from disk
 
         if (bucket.getBlobs().containsKey(blobName)) {
